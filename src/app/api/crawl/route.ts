@@ -3,11 +3,11 @@ import * as cheerio from 'cheerio';
 import { SitemapUrl } from '@/types/sitemap';
 
 const TIMEOUT = 10000;
+const CONCURRENCY = 5;
 
 function normalizeUrl(url: string, baseUrl: string): string | null {
   try {
     const parsed = new URL(url, baseUrl);
-    // Remove hash and trailing slash
     parsed.hash = '';
     let normalized = parsed.href;
     if (normalized.endsWith('/') && normalized !== parsed.origin + '/') {
@@ -98,11 +98,16 @@ function extractTitle(html: string): string | undefined {
   return title || undefined;
 }
 
+interface CrawlItem {
+  url: string;
+  depth: number;
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
 
   try {
-    const { url, maxPages } = await request.json();
+    const { url, maxPages, maxDepth } = await request.json();
 
     if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
@@ -117,39 +122,68 @@ export async function POST(request: NextRequest) {
     }
 
     const visited = new Set<string>();
-    const queue: { url: string; depth: number }[] = [{ url, depth: 0 }];
+    const queued = new Set<string>();
+    const queue: CrawlItem[] = [{ url, depth: 0 }];
     const results: SitemapUrl[] = [];
 
+    queued.add(url);
+
     while (queue.length > 0 && (!maxPages || results.length < maxPages)) {
-      const current = queue.shift();
-      if (!current) break;
+      // Get batch of URLs to crawl concurrently
+      const batch: CrawlItem[] = [];
+      while (batch.length < CONCURRENCY && queue.length > 0) {
+        const item = queue.shift();
+        if (item && !visited.has(item.url)) {
+          batch.push(item);
+        }
+      }
 
-      const { url: currentUrl, depth } = current;
+      if (batch.length === 0) break;
 
-      if (visited.has(currentUrl)) continue;
-      visited.add(currentUrl);
+      // Crawl batch concurrently
+      const batchResults = await Promise.all(
+        batch.map(async ({ url: currentUrl, depth }) => {
+          if (visited.has(currentUrl)) return null;
+          visited.add(currentUrl);
 
-      const pageData = await fetchPage(currentUrl);
+          const pageData = await fetchPage(currentUrl);
+          if (!pageData) return null;
 
-      if (pageData) {
-        const title = pageData.html ? extractTitle(pageData.html) : undefined;
+          const title = pageData.html ? extractTitle(pageData.html) : undefined;
 
-        results.push({
-          loc: currentUrl,
-          lastmod: new Date().toISOString().split('T')[0],
-          changefreq: depth === 0 ? 'daily' : depth === 1 ? 'weekly' : 'monthly',
-          priority: Math.max(0.1, 1 - depth * 0.2),
-          depth,
-          title,
-          status: pageData.status,
-        });
+          const result: SitemapUrl = {
+            loc: currentUrl,
+            lastmod: new Date().toISOString().split('T')[0],
+            changefreq: depth === 0 ? 'daily' : depth === 1 ? 'weekly' : 'monthly',
+            priority: Math.max(0.1, 1 - depth * 0.2),
+            depth,
+            title,
+            status: pageData.status,
+          };
 
-        if (pageData.html) {
-          const links = extractLinks(pageData.html, currentUrl);
-          for (const link of links) {
-            if (!visited.has(link) && !queue.some(q => q.url === link)) {
-              queue.push({ url: link, depth: depth + 1 });
-            }
+          // Extract links if not at max depth
+          let newLinks: string[] = [];
+          if (pageData.html && (maxDepth === undefined || depth < maxDepth)) {
+            newLinks = extractLinks(pageData.html, currentUrl);
+          }
+
+          return { result, newLinks, depth };
+        })
+      );
+
+      // Process results
+      for (const item of batchResults) {
+        if (!item) continue;
+
+        if (!maxPages || results.length < maxPages) {
+          results.push(item.result);
+        }
+
+        // Add new links to queue
+        for (const link of item.newLinks) {
+          if (!visited.has(link) && !queued.has(link)) {
+            queued.add(link);
+            queue.push({ url: link, depth: item.depth + 1 });
           }
         }
       }

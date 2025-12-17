@@ -16,9 +16,11 @@ import { generateXmlSitemap } from "@/lib/export";
 
 export function SitemapGenerator() {
   const [url, setUrl] = useState("");
+  const [maxDepth, setMaxDepth] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<SitemapResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [crawlProgress, setCrawlProgress] = useState<number>(0);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,12 +45,18 @@ export function SitemapGenerator() {
     setIsLoading(true);
     setError(null);
     setResult(null);
+    setCrawlProgress(0);
 
     try {
+      const params: { url: string; maxDepth?: number } = { url: normalizedUrl };
+      if (maxDepth && parseInt(maxDepth) > 0) {
+        params.maxDepth = parseInt(maxDepth);
+      }
+
       const response = await fetch("/api/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: normalizedUrl }),
+        body: JSON.stringify(params),
       });
 
       const data = await response.json();
@@ -90,6 +98,19 @@ export function SitemapGenerator() {
             disabled={isLoading}
           />
         </div>
+        <div className="flex items-center gap-2 bg-card border border-border px-2">
+          <span className="text-muted-foreground">depth:</span>
+          <Input
+            type="number"
+            placeholder="∞"
+            min="1"
+            max="99"
+            value={maxDepth}
+            onChange={(e) => setMaxDepth(e.target.value)}
+            className="border-0 bg-transparent h-7 w-12 px-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+            disabled={isLoading}
+          />
+        </div>
         <Button type="submit" size="sm" disabled={isLoading} className="h-7 px-3">
           {isLoading ? (
             <>
@@ -107,7 +128,7 @@ export function SitemapGenerator() {
         <div className="border border-border bg-card p-2">
           <div className="flex items-center gap-2 text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" />
-            <span>crawling {url}...</span>
+            <span>crawling {url}{maxDepth ? ` (max depth: ${maxDepth})` : ""}...</span>
           </div>
         </div>
       )}
