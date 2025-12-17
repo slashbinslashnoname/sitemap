@@ -10,6 +10,7 @@ import {
 } from "@/lib/export";
 import { toast } from "sonner";
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n";
 
 interface ExportButtonsProps {
   urls: SitemapUrl[];
@@ -17,6 +18,7 @@ interface ExportButtonsProps {
 }
 
 export function ExportButtons({ urls, baseUrl }: ExportButtonsProps) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   const hostname = new URL(baseUrl).hostname.replace(/\./g, "_");
@@ -32,20 +34,20 @@ export function ExportButtons({ urls, baseUrl }: ExportButtonsProps) {
     const { fn, mime, ext } = generators[format];
     const content = fn(urls);
     downloadFile(content, `sitemap_${hostname}.${ext}`, mime);
-    toast.success(`exported ${format}`);
+    toast.success(`${t.exportedMessage} ${format}`);
   };
 
   const handleCopyXml = async () => {
     const xml = generateXmlSitemap(urls);
     await navigator.clipboard.writeText(xml);
     setCopied(true);
-    toast.success("copied");
+    toast.success(t.copiedMessage);
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <div className="flex items-center gap-1">
-      <span className="text-muted-foreground mr-1">export:</span>
+      <span className="text-muted-foreground mr-1">{t.exportLabel}</span>
       {(["xml", "txt", "json", "csv"] as const).map((format) => (
         <button
           key={format}
@@ -60,7 +62,7 @@ export function ExportButtons({ urls, baseUrl }: ExportButtonsProps) {
         onClick={handleCopyXml}
         className="px-1.5 py-0.5 hover:bg-muted hover:text-primary transition-colors"
       >
-        {copied ? "copied!" : "copy"}
+        {copied ? t.copiedButton : t.copyButton}
       </button>
     </div>
   );
