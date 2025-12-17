@@ -1,8 +1,16 @@
 "use client";
 
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 
 export type Language = "en" | "de" | "es" | "fr" | "hi";
+
+export const LANGUAGES: Language[] = ["en", "de", "es", "fr", "hi"];
+export const DEFAULT_LANGUAGE: Language = "en";
+
+function isValidLanguage(lang: string | null): lang is Language {
+  return lang !== null && LANGUAGES.includes(lang as Language);
+}
 
 export interface Translations {
   // App
@@ -500,18 +508,18 @@ const translations: Record<Language, Translations> = {
 
 interface I18nContextType {
   language: Language;
-  setLanguage: (lang: Language) => void;
   t: Translations;
 }
 
 const I18nContext = createContext<I18nContextType | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguage] = useState<Language>("en");
+  const searchParams = useSearchParams();
+  const langParam = searchParams.get("lang");
+  const language: Language = isValidLanguage(langParam) ? langParam : DEFAULT_LANGUAGE;
 
   const value = {
     language,
-    setLanguage,
     t: translations[language]
   };
 
