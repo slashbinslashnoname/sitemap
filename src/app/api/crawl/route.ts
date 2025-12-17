@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import * as cheerio from 'cheerio';
 import { SitemapUrl } from '@/types/sitemap';
 
@@ -43,10 +43,15 @@ function shouldCrawl(url: string): boolean {
   return !excludeExtensions.some(ext => lowerUrl.endsWith(ext));
 }
 
-async function fetchPage(url: string): Promise<{ html: string; status: number } | null> {
+async function fetchPage(url: string, signal?: AbortSignal): Promise<{ html: string; status: number } | null> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
+
+    // Link external signal to our controller
+    if (signal) {
+      signal.addEventListener('abort', () => controller.abort());
+    }
 
     const response = await fetch(url, {
       signal: controller.signal,
@@ -110,7 +115,10 @@ export async function POST(request: NextRequest) {
     const { url, maxPages, maxDepth } = await request.json();
 
     if (!url) {
-      return NextResponse.json({ error: 'URL is required' }, { status: 400 });
+      return new Response(JSON.stringify({ error: 'URL is required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
     let baseUrl: string;
@@ -118,89 +126,144 @@ export async function POST(request: NextRequest) {
       const parsed = new URL(url);
       baseUrl = parsed.origin;
     } catch {
-      return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
+      return new Response(JSON.stringify({ error: 'Invalid URL format' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
-    const visited = new Set<string>();
-    const queued = new Set<string>();
-    const queue: CrawlItem[] = [{ url, depth: 0 }];
-    const results: SitemapUrl[] = [];
+    // Create a readable stream for SSE
+    const encoder = new TextEncoder();
+    let isCancelled = false;
 
-    queued.add(url);
+    const stream = new ReadableStream({
+      async start(controller) {
+        const sendEvent = (event: string, data: unknown) => {
+          if (isCancelled) return;
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        };
 
-    while (queue.length > 0 && (!maxPages || results.length < maxPages)) {
-      // Get batch of URLs to crawl concurrently
-      const batch: CrawlItem[] = [];
-      while (batch.length < CONCURRENCY && queue.length > 0) {
-        const item = queue.shift();
-        if (item && !visited.has(item.url)) {
-          batch.push(item);
-        }
-      }
+        // Send initial info
+        sendEvent('start', { baseUrl, startTime });
 
-      if (batch.length === 0) break;
+        const visited = new Set<string>();
+        const queued = new Set<string>();
+        const queue: CrawlItem[] = [{ url, depth: 0 }];
+        const results: SitemapUrl[] = [];
 
-      // Crawl batch concurrently
-      const batchResults = await Promise.all(
-        batch.map(async ({ url: currentUrl, depth }) => {
-          if (visited.has(currentUrl)) return null;
-          visited.add(currentUrl);
+        queued.add(url);
 
-          const pageData = await fetchPage(currentUrl);
-          if (!pageData) return null;
+        try {
+          while (queue.length > 0 && (!maxPages || results.length < maxPages) && !isCancelled) {
+            // Get batch of URLs to crawl concurrently
+            const batch: CrawlItem[] = [];
+            while (batch.length < CONCURRENCY && queue.length > 0) {
+              const item = queue.shift();
+              if (item && !visited.has(item.url)) {
+                batch.push(item);
+              }
+            }
 
-          const title = pageData.html ? extractTitle(pageData.html) : undefined;
+            if (batch.length === 0) break;
 
-          const result: SitemapUrl = {
-            loc: currentUrl,
-            lastmod: new Date().toISOString().split('T')[0],
-            changefreq: depth === 0 ? 'daily' : depth === 1 ? 'weekly' : 'monthly',
-            priority: Math.max(0.1, 1 - depth * 0.2),
-            depth,
-            title,
-            status: pageData.status,
-          };
+            // Crawl batch concurrently
+            const batchResults = await Promise.all(
+              batch.map(async ({ url: currentUrl, depth }) => {
+                if (visited.has(currentUrl) || isCancelled) return null;
+                visited.add(currentUrl);
 
-          // Extract links if not at max depth
-          let newLinks: string[] = [];
-          if (pageData.html && (maxDepth === undefined || depth < maxDepth)) {
-            newLinks = extractLinks(pageData.html, currentUrl);
+                const pageData = await fetchPage(currentUrl);
+                if (!pageData) return null;
+
+                const title = pageData.html ? extractTitle(pageData.html) : undefined;
+
+                const result: SitemapUrl = {
+                  loc: currentUrl,
+                  lastmod: new Date().toISOString().split('T')[0],
+                  changefreq: depth === 0 ? 'daily' : depth === 1 ? 'weekly' : 'monthly',
+                  priority: Math.max(0.1, 1 - depth * 0.2),
+                  depth,
+                  title,
+                  status: pageData.status,
+                };
+
+                // Extract links if not at max depth
+                let newLinks: string[] = [];
+                if (pageData.html && (maxDepth === undefined || depth < maxDepth)) {
+                  newLinks = extractLinks(pageData.html, currentUrl);
+                }
+
+                return { result, newLinks, depth };
+              })
+            );
+
+            // Process results and send them
+            for (const item of batchResults) {
+              if (!item || isCancelled) continue;
+
+              if (!maxPages || results.length < maxPages) {
+                results.push(item.result);
+                // Send each URL as it's discovered
+                sendEvent('url', {
+                  url: item.result,
+                  total: results.length,
+                  queued: queue.length
+                });
+              }
+
+              // Add new links to queue
+              for (const link of item.newLinks) {
+                if (!visited.has(link) && !queued.has(link)) {
+                  queued.add(link);
+                  queue.push({ url: link, depth: item.depth + 1 });
+                }
+              }
+            }
+
+            // Send progress update
+            sendEvent('progress', {
+              crawled: results.length,
+              queued: queue.length,
+              elapsed: Date.now() - startTime
+            });
           }
 
-          return { result, newLinks, depth };
-        })
-      );
+          const crawlTime = Date.now() - startTime;
 
-      // Process results
-      for (const item of batchResults) {
-        if (!item) continue;
+          // Send completion event
+          sendEvent('complete', {
+            urls: results,
+            baseUrl,
+            crawlTime,
+            totalPages: results.length,
+          });
 
-        if (!maxPages || results.length < maxPages) {
-          results.push(item.result);
+        } catch (error) {
+          sendEvent('error', {
+            message: error instanceof Error ? error.message : 'An error occurred'
+          });
         }
 
-        // Add new links to queue
-        for (const link of item.newLinks) {
-          if (!visited.has(link) && !queued.has(link)) {
-            queued.add(link);
-            queue.push({ url: link, depth: item.depth + 1 });
-          }
-        }
+        controller.close();
+      },
+      cancel() {
+        isCancelled = true;
       }
-    }
+    });
 
-    const crawlTime = Date.now() - startTime;
-
-    return NextResponse.json({
-      urls: results,
-      baseUrl,
-      crawlTime,
-      totalPages: results.length,
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'An error occurred' },
-      { status: 500 }
-    );
+    return new Response(JSON.stringify({
+      error: error instanceof Error ? error.message : 'An error occurred'
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 }

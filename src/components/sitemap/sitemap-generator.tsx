@@ -1,17 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { SitemapResult } from "@/types/sitemap";
+import { SitemapResult, SitemapUrl } from "@/types/sitemap";
 import { TreeView } from "./tree-view";
 import { UrlList } from "./url-list";
 import { ExportButtons } from "./export-buttons";
 import { buildTree } from "@/lib/tree";
-import { Loader2 } from "lucide-react";
+import { Loader2, Square } from "lucide-react";
 import { generateXmlSitemap } from "@/lib/export";
 
 export function SitemapGenerator() {
@@ -20,7 +20,30 @@ export function SitemapGenerator() {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<SitemapResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [crawlProgress, setCrawlProgress] = useState<number>(0);
+  const [liveUrls, setLiveUrls] = useState<SitemapUrl[]>([]);
+  const [crawlStats, setCrawlStats] = useState<{ crawled: number; queued: number; elapsed: number } | null>(null);
+  const [baseUrl, setBaseUrl] = useState<string>("");
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsLoading(false);
+
+      // Convert live URLs to final result if we have any
+      if (liveUrls.length > 0) {
+        const crawlTime = crawlStats?.elapsed || 0;
+        setResult({
+          urls: liveUrls,
+          baseUrl: baseUrl,
+          crawlTime,
+          totalPages: liveUrls.length,
+        });
+        toast.info(`Stopped - ${liveUrls.length} pages crawled`);
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,7 +68,12 @@ export function SitemapGenerator() {
     setIsLoading(true);
     setError(null);
     setResult(null);
-    setCrawlProgress(0);
+    setLiveUrls([]);
+    setCrawlStats(null);
+    setBaseUrl("");
+
+    // Create abort controller for this request
+    abortControllerRef.current = new AbortController();
 
     try {
       const params: { url: string; maxDepth?: number } = { url: normalizedUrl };
@@ -57,31 +85,91 @@ export function SitemapGenerator() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params),
+        signal: abortControllerRef.current.signal,
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json();
         throw new Error(data.error || "Crawl failed");
       }
 
-      if (data.urls.length === 0) {
-        setError("No pages found - site may block crawlers");
-        return;
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("No response body");
       }
 
-      setResult(data);
-      toast.success(`${data.totalPages} pages in ${(data.crawlTime / 1000).toFixed(1)}s`);
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        let eventType = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7);
+          } else if (line.startsWith("data: ") && eventType) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              switch (eventType) {
+                case "start":
+                  setBaseUrl(data.baseUrl);
+                  break;
+                case "url":
+                  setLiveUrls(prev => [...prev, data.url]);
+                  break;
+                case "progress":
+                  setCrawlStats({
+                    crawled: data.crawled,
+                    queued: data.queued,
+                    elapsed: data.elapsed,
+                  });
+                  break;
+                case "complete":
+                  setResult(data);
+                  toast.success(`${data.totalPages} pages in ${(data.crawlTime / 1000).toFixed(1)}s`);
+                  break;
+                case "error":
+                  throw new Error(data.message);
+              }
+            } catch (parseError) {
+              if (parseError instanceof SyntaxError) {
+                // Skip malformed JSON
+              } else {
+                throw parseError;
+              }
+            }
+            eventType = "";
+          }
+        }
+      }
+
+      if (liveUrls.length === 0 && !result) {
+        setError("No pages found - site may block crawlers");
+      }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        // User stopped the crawl - handled in handleStop
+        return;
+      }
       const message = err instanceof Error ? err.message : "Error";
       setError(message);
       toast.error(message);
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
-  const tree = result ? buildTree(result.urls, result.baseUrl) : null;
+  const displayUrls = result?.urls || liveUrls;
+  const displayBaseUrl = result?.baseUrl || baseUrl;
+  const tree = displayUrls.length > 0 && displayBaseUrl ? buildTree(displayUrls, displayBaseUrl) : null;
 
   return (
     <div className="space-y-2">
@@ -111,25 +199,58 @@ export function SitemapGenerator() {
             disabled={isLoading}
           />
         </div>
-        <Button type="submit" size="sm" disabled={isLoading} className="h-7 px-3">
-          {isLoading ? (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin mr-1" />
-              crawling...
-            </>
-          ) : (
-            "generate"
-          )}
-        </Button>
+        {isLoading ? (
+          <Button type="button" size="sm" variant="destructive" onClick={handleStop} className="h-7 px-3">
+            <Square className="h-3 w-3 mr-1" />
+            stop
+          </Button>
+        ) : (
+          <Button type="submit" size="sm" className="h-7 px-3">
+            generate
+          </Button>
+        )}
       </form>
 
-      {/* Loading */}
+      {/* Live crawling status with results */}
       {isLoading && (
-        <div className="border border-border bg-card p-2">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span>crawling {url}{maxDepth ? ` (max depth: ${maxDepth})` : ""}...</span>
+        <div className="border border-border bg-card">
+          {/* Live stats bar */}
+          <div className="flex items-center justify-between border-b border-border px-2 py-1 bg-muted/30">
+            <div className="flex items-center gap-4">
+              <span className="flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span className="text-muted-foreground">crawling:</span>{" "}
+                <span className="text-primary">{baseUrl ? new URL(baseUrl).hostname : url}</span>
+              </span>
+              {crawlStats && (
+                <>
+                  <span>
+                    <span className="text-muted-foreground">found:</span>{" "}
+                    <span className="text-foreground">{crawlStats.crawled}</span>
+                  </span>
+                  <span>
+                    <span className="text-muted-foreground">queued:</span>{" "}
+                    <span className="text-foreground">{crawlStats.queued}</span>
+                  </span>
+                  <span>
+                    <span className="text-muted-foreground">time:</span>{" "}
+                    <span className="text-foreground">{(crawlStats.elapsed / 1000).toFixed(1)}s</span>
+                  </span>
+                </>
+              )}
+            </div>
           </div>
+
+          {/* Live URL list */}
+          <ScrollArea className="h-[calc(100vh-180px)]">
+            <div className="p-1">
+              {liveUrls.length > 0 ? (
+                <UrlList urls={liveUrls} />
+              ) : (
+                <div className="p-2 text-muted-foreground">Starting crawl...</div>
+              )}
+            </div>
+          </ScrollArea>
         </div>
       )}
 
