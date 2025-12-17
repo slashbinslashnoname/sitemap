@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
 import { SitemapUrl } from '@/types/sitemap';
 
-const MAX_PAGES = 100;
 const TIMEOUT = 10000;
 
 function normalizeUrl(url: string, baseUrl: string): string | null {
@@ -103,7 +102,7 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
 
   try {
-    const { url, maxPages = MAX_PAGES } = await request.json();
+    const { url, maxPages } = await request.json();
 
     if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
@@ -120,9 +119,8 @@ export async function POST(request: NextRequest) {
     const visited = new Set<string>();
     const queue: { url: string; depth: number }[] = [{ url, depth: 0 }];
     const results: SitemapUrl[] = [];
-    const limit = Math.min(maxPages, MAX_PAGES);
 
-    while (queue.length > 0 && results.length < limit) {
+    while (queue.length > 0 && (!maxPages || results.length < maxPages)) {
       const current = queue.shift();
       if (!current) break;
 

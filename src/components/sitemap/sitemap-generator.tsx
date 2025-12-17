@@ -63,7 +63,7 @@ export function SitemapGenerator() {
       const response = await fetch("/api/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: normalizedUrl, maxPages: 100 }),
+        body: JSON.stringify({ url: normalizedUrl }),
       });
 
       const data = await response.json();
