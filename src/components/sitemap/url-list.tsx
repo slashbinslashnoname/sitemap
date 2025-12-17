@@ -1,22 +1,25 @@
 "use client";
 
 import { SitemapUrl } from "@/types/sitemap";
+import { useI18n } from "@/lib/i18n";
 
 interface UrlListProps {
   urls: SitemapUrl[];
 }
 
 export function UrlList({ urls }: UrlListProps) {
+  const { t } = useI18n();
+
   return (
     <table className="w-full">
       <thead className="text-muted-foreground border-b border-border sticky top-0 bg-card">
         <tr>
-          <th className="text-left py-1 px-2 w-8">#</th>
-          <th className="text-left py-1 px-2">url</th>
-          <th className="text-left py-1 px-2 w-12">st</th>
-          <th className="text-left py-1 px-2 w-10">d</th>
-          <th className="text-left py-1 px-2 w-12">pri</th>
-          <th className="text-left py-1 px-2 w-16">freq</th>
+          <th className="text-left py-1 px-2 w-8">{t.headerNumber}</th>
+          <th className="text-left py-1 px-2">{t.headerUrl}</th>
+          <th className="text-left py-1 px-2 w-12">{t.headerStatus}</th>
+          <th className="text-left py-1 px-2 w-10">{t.headerDepth}</th>
+          <th className="text-left py-1 px-2 w-12">{t.headerPriority}</th>
+          <th className="text-left py-1 px-2 w-16">{t.headerFrequency}</th>
         </tr>
       </thead>
       <tbody>

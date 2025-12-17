@@ -13,8 +13,10 @@ import { ExportButtons } from "./export-buttons";
 import { buildTree } from "@/lib/tree";
 import { Loader2, Square } from "lucide-react";
 import { generateXmlSitemap } from "@/lib/export";
+import { useI18n } from "@/lib/i18n";
 
 export function SitemapGenerator() {
+  const { t } = useI18n();
   const [url, setUrl] = useState("");
   const [maxDepth, setMaxDepth] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
@@ -40,7 +42,7 @@ export function SitemapGenerator() {
           crawlTime,
           totalPages: liveUrls.length,
         });
-        toast.info(`Stopped - ${liveUrls.length} pages crawled`);
+        toast.info(`${t.stoppedMessage}: ${liveUrls.length}`);
       }
     }
   };
@@ -49,7 +51,7 @@ export function SitemapGenerator() {
     e.preventDefault();
 
     if (!url.trim()) {
-      toast.error("URL required");
+      toast.error(t.urlRequired);
       return;
     }
 
@@ -61,7 +63,7 @@ export function SitemapGenerator() {
     try {
       new URL(normalizedUrl);
     } catch {
-      toast.error("Invalid URL");
+      toast.error(t.invalidUrl);
       return;
     }
 
@@ -133,7 +135,7 @@ export function SitemapGenerator() {
                   break;
                 case "complete":
                   setResult(data);
-                  toast.success(`${data.totalPages} pages in ${(data.crawlTime / 1000).toFixed(1)}s`);
+                  toast.success(`${data.totalPages} ${t.pagesFoundMessage} ${(data.crawlTime / 1000).toFixed(1)}s`);
                   break;
                 case "error":
                   throw new Error(data.message);
@@ -151,7 +153,7 @@ export function SitemapGenerator() {
       }
 
       if (liveUrls.length === 0 && !result) {
-        setError("No pages found - site may block crawlers");
+        setError(t.noPagesFound);
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
@@ -176,10 +178,10 @@ export function SitemapGenerator() {
       {/* Input */}
       <form onSubmit={handleSubmit} className="flex gap-2">
         <div className="flex-1 flex items-center gap-2 bg-card border border-border px-2">
-          <span className="text-muted-foreground">url:</span>
+          <span className="text-muted-foreground">{t.urlLabel}</span>
           <Input
             type="text"
-            placeholder="example.com"
+            placeholder={t.urlPlaceholder}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             className="border-0 bg-transparent h-7 px-0 focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -187,10 +189,10 @@ export function SitemapGenerator() {
           />
         </div>
         <div className="flex items-center gap-2 bg-card border border-border px-2">
-          <span className="text-muted-foreground">depth:</span>
+          <span className="text-muted-foreground">{t.depthLabel}</span>
           <Input
             type="number"
-            placeholder="∞"
+            placeholder={t.depthPlaceholder}
             min="1"
             max="99"
             value={maxDepth}
@@ -202,11 +204,11 @@ export function SitemapGenerator() {
         {isLoading ? (
           <Button type="button" size="sm" variant="destructive" onClick={handleStop} className="h-7 px-3">
             <Square className="h-3 w-3 mr-1" />
-            stop
+            {t.stopButton}
           </Button>
         ) : (
           <Button type="submit" size="sm" className="h-7 px-3">
-            generate
+            {t.generateButton}
           </Button>
         )}
       </form>
@@ -219,21 +221,21 @@ export function SitemapGenerator() {
             <div className="flex items-center gap-4">
               <span className="flex items-center gap-1">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                <span className="text-muted-foreground">crawling:</span>{" "}
+                <span className="text-muted-foreground">{t.crawlingLabel}</span>{" "}
                 <span className="text-primary">{baseUrl ? new URL(baseUrl).hostname : url}</span>
               </span>
               {crawlStats && (
                 <>
                   <span>
-                    <span className="text-muted-foreground">found:</span>{" "}
+                    <span className="text-muted-foreground">{t.foundLabel}</span>{" "}
                     <span className="text-foreground">{crawlStats.crawled}</span>
                   </span>
                   <span>
-                    <span className="text-muted-foreground">queued:</span>{" "}
+                    <span className="text-muted-foreground">{t.queuedLabel}</span>{" "}
                     <span className="text-foreground">{crawlStats.queued}</span>
                   </span>
                   <span>
-                    <span className="text-muted-foreground">time:</span>{" "}
+                    <span className="text-muted-foreground">{t.timeLabel}</span>{" "}
                     <span className="text-foreground">{(crawlStats.elapsed / 1000).toFixed(1)}s</span>
                   </span>
                 </>
@@ -247,7 +249,7 @@ export function SitemapGenerator() {
               {liveUrls.length > 0 ? (
                 <UrlList urls={liveUrls} />
               ) : (
-                <div className="p-2 text-muted-foreground">Starting crawl...</div>
+                <div className="p-2 text-muted-foreground">{t.startingCrawl}</div>
               )}
             </div>
           </ScrollArea>
@@ -257,7 +259,7 @@ export function SitemapGenerator() {
       {/* Error */}
       {error && !isLoading && (
         <div className="border border-destructive/50 bg-destructive/10 p-2 text-destructive">
-          error: {error}
+          {t.errorLabel} {error}
         </div>
       )}
 
@@ -268,19 +270,19 @@ export function SitemapGenerator() {
           <div className="flex items-center justify-between border-b border-border px-2 py-1 bg-muted/30">
             <div className="flex items-center gap-4">
               <span>
-                <span className="text-muted-foreground">domain:</span>{" "}
+                <span className="text-muted-foreground">{t.domainLabel}</span>{" "}
                 <span className="text-primary">{new URL(result.baseUrl).hostname}</span>
               </span>
               <span>
-                <span className="text-muted-foreground">pages:</span>{" "}
+                <span className="text-muted-foreground">{t.pagesLabel}</span>{" "}
                 <span className="text-foreground">{result.totalPages}</span>
               </span>
               <span>
-                <span className="text-muted-foreground">time:</span>{" "}
+                <span className="text-muted-foreground">{t.timeLabel}</span>{" "}
                 <span className="text-foreground">{(result.crawlTime / 1000).toFixed(1)}s</span>
               </span>
               <span>
-                <span className="text-muted-foreground">depth:</span>{" "}
+                <span className="text-muted-foreground">{t.depthStatLabel}</span>{" "}
                 <span className="text-foreground">{Math.max(...result.urls.map((u) => u.depth))}</span>
               </span>
             </div>
@@ -292,13 +294,13 @@ export function SitemapGenerator() {
             <div className="border-b border-border px-2">
               <TabsList className="h-7 bg-transparent p-0 gap-2">
                 <TabsTrigger value="tree" className="h-6 px-2 text-xs data-[state=active]:bg-muted">
-                  tree
+                  {t.treeTab}
                 </TabsTrigger>
                 <TabsTrigger value="list" className="h-6 px-2 text-xs data-[state=active]:bg-muted">
-                  list
+                  {t.listTab}
                 </TabsTrigger>
                 <TabsTrigger value="xml" className="h-6 px-2 text-xs data-[state=active]:bg-muted">
-                  xml
+                  {t.xmlTab}
                 </TabsTrigger>
               </TabsList>
             </div>
