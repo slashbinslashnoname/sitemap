@@ -3,8 +3,8 @@ import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Sitemap Generator | Generate XML Sitemaps",
-  description: "Generate beautiful XML sitemaps for any website. Crawl pages, visualize site structure, and export in multiple formats.",
+  title: "sitemap-gen",
+  description: "Generate XML sitemaps for any website",
 };
 
 export default function RootLayout({
@@ -14,9 +14,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="font-sans antialiased">
+      <body className="font-mono antialiased">
         {children}
-        <Toaster richColors position="top-center" />
+        <Toaster position="top-right" />
       </body>
     </html>
   );
